@@ -1,6 +1,6 @@
 use crate::libraries::{big_num::U128, fixed_point_64, full_math::MulDiv, tick_math};
 use crate::states::*;
-use crate::util::get_transfer_fee;
+use crate::util::{ensure_no_transfer_hook, get_transfer_fee};
 use crate::{error::ErrorCode, Result};
 use anchor_lang::{prelude::*, solana_program};
 use anchor_spl::token_2022;
@@ -122,6 +122,7 @@ pub fn open_limit_order<'info>(
     tick_index: i32,
     amount: u64,
 ) -> Result<()> {
+    ensure_no_transfer_hook(&ctx.accounts.input_vault_mint.to_account_info())?;
     require!(
         !ctx.accounts.input_token_account.is_frozen()
             && !ctx.accounts.output_token_account.is_frozen(),

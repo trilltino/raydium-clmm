@@ -55,6 +55,7 @@ pub struct SettleLimitOrder<'info> {
 }
 
 pub fn settle_limit_order(ctx: Context<SettleLimitOrder>) -> Result<()> {
+    crate::util::ensure_no_transfer_hook(&ctx.accounts.output_vault_mint.to_account_info())?;
     let tick_spacing = ctx.accounts.pool_state.load()?.tick_spacing;
 
     let tick_index = ctx.accounts.limit_order.tick_index;

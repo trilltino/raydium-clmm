@@ -7,7 +7,7 @@ use anchor_lang::{prelude::*, solana_program};
 use anchor_spl::memo::Memo;
 use anchor_spl::token::Token;
 use anchor_spl::token_interface::{Mint, Token2022, TokenAccount};
-use std::collections::VecDeque;
+use std::{collections::VecDeque, ops::Range};
 
 /// Memo msg for swap
 pub const SWAP_MEMO_MSG: &'static [u8] = b"raydium_swap";
@@ -87,6 +87,26 @@ pub fn exact_internal_v2<'info>(
     sqrt_price_limit_x64: u128,
     is_base_input: bool,
 ) -> Result<u64> {
+    exact_internal_with_hook_accounts(
+        ctx,
+        remaining_accounts,
+        &[],
+        &[],
+        amount_specified,
+        sqrt_price_limit_x64,
+        is_base_input,
+    )
+}
+
+fn exact_internal_with_hook_accounts<'info>(
+    ctx: &mut SwapSingleV2<'info>,
+    tick_accounts: &'info [AccountInfo<'info>],
+    input_hook_accounts: &'info [AccountInfo<'info>],
+    output_hook_accounts: &'info [AccountInfo<'info>],
+    amount_specified: u64,
+    sqrt_price_limit_x64: u128,
+    is_base_input: bool,
+) -> Result<u64> {
     // invoke_memo_instruction(SWAP_MEMO_MSG, ctx.memo_program.to_account_info())?;
 
     let block_timestamp = solana_program::clock::Clock::get()?.unix_timestamp as u64;
@@ -129,7 +149,7 @@ pub fn exact_internal_v2<'info>(
         let mut tickarray_bitmap_extension = None;
         let tick_array_states = &mut VecDeque::new();
 
-        for account_info in remaining_accounts.into_iter() {
+        for account_info in tick_accounts {
             if account_info.data_len() == TickArrayState::LEN {
                 tick_array_states.push_back(AccountLoad::load_data_mut(account_info)?);
             } else if account_info.data_len() == TickArrayBitmapExtension::LEN {
@@ -269,7 +289,7 @@ pub fn exact_internal_v2<'info>(
 
     if zero_for_one {
         //  x -> y, deposit x token from user to pool vault.
-        transfer_from_user_to_pool_vault(
+        transfer_from_user_to_pool_vault_with_hook_accounts(
             &ctx.payer,
             &token_account_0.to_account_info(),
             &vault_0.to_account_info(),
@@ -277,9 +297,10 @@ pub fn exact_internal_v2<'info>(
             &ctx.token_program,
             Some(ctx.token_program_2022.to_account_info()),
             transfer_amount_0,
+            input_hook_accounts,
         )?;
         // x -> y，transfer y token from pool vault to user.
-        transfer_from_pool_vault_to_user(
+        transfer_from_pool_vault_to_user_with_hook_accounts(
             &ctx.pool_state,
             &vault_1.to_account_info(),
             &token_account_1.to_account_info(),
@@ -287,9 +308,10 @@ pub fn exact_internal_v2<'info>(
             &ctx.token_program,
             Some(ctx.token_program_2022.to_account_info()),
             transfer_amount_1,
+            output_hook_accounts,
         )?;
     } else {
-        transfer_from_user_to_pool_vault(
+        transfer_from_user_to_pool_vault_with_hook_accounts(
             &ctx.payer,
             &token_account_1.to_account_info(),
             &vault_1.to_account_info(),
@@ -297,8 +319,9 @@ pub fn exact_internal_v2<'info>(
             &ctx.token_program,
             Some(ctx.token_program_2022.to_account_info()),
             transfer_amount_1,
+            input_hook_accounts,
         )?;
-        transfer_from_pool_vault_to_user(
+        transfer_from_pool_vault_to_user_with_hook_accounts(
             &ctx.pool_state,
             &vault_0.to_account_info(),
             &token_account_0.to_account_info(),
@@ -306,6 +329,7 @@ pub fn exact_internal_v2<'info>(
             &ctx.token_program,
             Some(ctx.token_program_2022.to_account_info()),
             transfer_amount_0,
+            output_hook_accounts,
         )?;
     }
     ctx.output_token_account.reload()?;
@@ -346,6 +370,42 @@ pub fn exact_internal_v2<'info>(
     result
 }
 
+fn swap_v3_account_ranges(
+    remaining_account_count: usize,
+    tick_array_count: u16,
+    bitmap_count: u16,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<(Range<usize>, Range<usize>, Range<usize>, Range<usize>)> {
+    require!(
+        bitmap_count <= 1
+            && (input_hook_account_count == 0 || input_hook_account_count >= 2)
+            && (output_hook_account_count == 0 || output_hook_account_count >= 2),
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let tick_end = usize::from(tick_array_count);
+    let bitmap_end = tick_end
+        .checked_add(usize::from(bitmap_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    let input_end = bitmap_end
+        .checked_add(usize::from(input_hook_account_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    let output_end = input_end
+        .checked_add(usize::from(output_hook_account_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    require_eq!(
+        output_end,
+        remaining_account_count,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    Ok((
+        0..tick_end,
+        tick_end..bitmap_end,
+        bitmap_end..input_end,
+        input_end..output_end,
+    ))
+}
+
 pub fn swap_v2<'info>(
     ctx: Context<'info, SwapSingleV2<'info>>,
     amount: u64,
@@ -375,4 +435,88 @@ pub fn swap_v2<'info>(
     }
 
     Ok(())
+}
+
+pub fn swap_v3<'info>(
+    ctx: Context<'info, SwapSingleV2<'info>>,
+    amount: u64,
+    other_amount_threshold: u64,
+    sqrt_price_limit_x64: u128,
+    is_base_input: bool,
+    tick_array_count: u16,
+    bitmap_count: u16,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    let (tick_range, bitmap_range, input_range, output_range) = swap_v3_account_ranges(
+        ctx.remaining_accounts.len(),
+        tick_array_count,
+        bitmap_count,
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
+    let remaining_accounts = ctx.remaining_accounts;
+    for account in &remaining_accounts[tick_range.clone()] {
+        require_eq!(
+            account.data_len(),
+            TickArrayState::LEN,
+            ErrorCode::InvalidTickArray
+        );
+    }
+    for account in &remaining_accounts[bitmap_range.clone()] {
+        require_eq!(
+            account.data_len(),
+            TickArrayBitmapExtension::LEN,
+            ErrorCode::InvalidTickArrayBitmapExtensionAccount
+        );
+    }
+    let tick_accounts = &remaining_accounts[tick_range.start..bitmap_range.end];
+    let input_hook_accounts = &remaining_accounts[input_range];
+    let output_hook_accounts = &remaining_accounts[output_range];
+
+    let amount_result = exact_internal_with_hook_accounts(
+        ctx.accounts,
+        &tick_accounts,
+        &input_hook_accounts,
+        &output_hook_accounts,
+        amount,
+        sqrt_price_limit_x64,
+        is_base_input,
+    )?;
+    if is_base_input {
+        require_gte!(
+            amount_result,
+            other_amount_threshold,
+            ErrorCode::TooLittleOutputReceived
+        );
+    } else {
+        require_gte!(
+            other_amount_threshold,
+            amount_result,
+            ErrorCode::TooMuchInputPaid
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swap_v3_account_ranges;
+
+    #[test]
+    fn swap_v3_ranges_keep_tick_and_transfer_sections_distinct() {
+        let (ticks, bitmap, input, output) = swap_v3_account_ranges(10, 4, 1, 3, 2).unwrap();
+        assert_eq!(ticks, 0..4);
+        assert_eq!(bitmap, 4..5);
+        assert_eq!(input, 5..8);
+        assert_eq!(output, 8..10);
+    }
+
+    #[test]
+    fn swap_v3_rejects_invalid_or_unframed_slices() {
+        assert!(swap_v3_account_ranges(2, 0, 2, 0, 0).is_err());
+        assert!(swap_v3_account_ranges(1, 0, 0, 1, 0).is_err());
+        assert!(swap_v3_account_ranges(3, 0, 0, 2, 2).is_err());
+    }
 }

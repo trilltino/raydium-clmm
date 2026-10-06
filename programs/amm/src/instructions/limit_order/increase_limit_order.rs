@@ -1,6 +1,6 @@
 use super::{check_limit_order_amount, check_tick_index};
 use crate::states::*;
-use crate::util::get_transfer_fee;
+use crate::util::{ensure_no_transfer_hook, get_transfer_fee};
 use crate::{error::ErrorCode, Result};
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022;
@@ -70,6 +70,7 @@ pub fn increase_limit_order<'info>(
     ctx: Context<'info, IncreaseLimitOrder<'info>>,
     amount: u64,
 ) -> Result<()> {
+    ensure_no_transfer_hook(&ctx.accounts.input_vault_mint.to_account_info())?;
     require!(amount > 0, ErrorCode::ZeroAmountSpecified);
     let (tick_spacing, tick_current) = {
         let pool_state = ctx.accounts.pool_state.load()?;

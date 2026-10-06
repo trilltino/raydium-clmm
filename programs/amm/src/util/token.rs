@@ -51,8 +51,38 @@ pub fn transfer_from_user_to_pool_vault<'info>(
     token_program_2022: Option<AccountInfo<'info>>,
     amount: u64,
 ) -> Result<()> {
+    transfer_from_user_to_pool_vault_with_hook_accounts(
+        signer,
+        from,
+        to_vault,
+        mint,
+        token_program,
+        token_program_2022,
+        amount,
+        &[],
+    )
+}
+
+pub fn transfer_from_user_to_pool_vault_with_hook_accounts<'info>(
+    signer: &Signer<'info>,
+    from: &AccountInfo<'info>,
+    to_vault: &AccountInfo<'info>,
+    mint: Option<Box<InterfaceAccount<'info, Mint>>>,
+    token_program: &AccountInfo<'info>,
+    token_program_2022: Option<AccountInfo<'info>>,
+    amount: u64,
+    hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
+    }
+    if let Some(mint) = mint.as_ref() {
+        validate_transfer_hook_accounts(&mint.to_account_info(), hook_accounts)?;
+    } else {
+        require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        );
     }
     let mut token_program_info = token_program.to_account_info();
     let from_token_info = from.to_account_info();
@@ -61,18 +91,16 @@ pub fn transfer_from_user_to_pool_vault<'info>(
             if from_token_info.owner == token_program_2022.key {
                 token_program_info = token_program_2022.to_account_info()
             }
-            token_2022::transfer_checked(
-                CpiContext::new(
-                    token_program_info.key(),
-                    token_2022::TransferChecked {
-                        from: from_token_info,
-                        to: to_vault.to_account_info(),
-                        authority: signer.to_account_info(),
-                        mint: mint.to_account_info(),
-                    },
-                ),
+            transfer_checked_with_hook_accounts(
+                token_program_info,
+                from_token_info,
+                mint.to_account_info(),
+                to_vault.to_account_info(),
+                signer.to_account_info(),
                 amount,
                 mint.decimals,
+                &[],
+                hook_accounts,
             )
         }
         _ => token::transfer(
@@ -98,8 +126,38 @@ pub fn transfer_from_pool_vault_to_user<'info>(
     token_program_2022: Option<AccountInfo<'info>>,
     amount: u64,
 ) -> Result<()> {
+    transfer_from_pool_vault_to_user_with_hook_accounts(
+        pool_state_loader,
+        from_vault,
+        to,
+        mint,
+        token_program,
+        token_program_2022,
+        amount,
+        &[],
+    )
+}
+
+pub fn transfer_from_pool_vault_to_user_with_hook_accounts<'info>(
+    pool_state_loader: &AccountLoader<'info, PoolState>,
+    from_vault: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    mint: Option<Box<InterfaceAccount<'info, Mint>>>,
+    token_program: &AccountInfo<'info>,
+    token_program_2022: Option<AccountInfo<'info>>,
+    amount: u64,
+    hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
+    }
+    if let Some(mint) = mint.as_ref() {
+        validate_transfer_hook_accounts(&mint.to_account_info(), hook_accounts)?;
+    } else {
+        require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        );
     }
     let mut token_program_info = token_program.to_account_info();
     let from_vault_info = from_vault.to_account_info();
@@ -108,19 +166,16 @@ pub fn transfer_from_pool_vault_to_user<'info>(
             if from_vault_info.owner == token_program_2022.key {
                 token_program_info = token_program_2022.to_account_info()
             }
-            token_2022::transfer_checked(
-                CpiContext::new_with_signer(
-                    token_program_info.key(),
-                    token_2022::TransferChecked {
-                        from: from_vault_info,
-                        to: to.to_account_info(),
-                        authority: pool_state_loader.to_account_info(),
-                        mint: mint.to_account_info(),
-                    },
-                    &[&pool_state_loader.load()?.seeds()],
-                ),
+            transfer_checked_with_hook_accounts(
+                token_program_info,
+                from_vault_info,
+                mint.to_account_info(),
+                to.to_account_info(),
+                pool_state_loader.to_account_info(),
                 amount,
                 mint.decimals,
+                &[&pool_state_loader.load()?.seeds()],
+                hook_accounts,
             )
         }
         _ => token::transfer(
@@ -136,6 +191,82 @@ pub fn transfer_from_pool_vault_to_user<'info>(
             amount,
         ),
     }
+}
+
+fn transfer_checked_with_hook_accounts<'info>(
+    token_program: AccountInfo<'info>,
+    from: AccountInfo<'info>,
+    mint: AccountInfo<'info>,
+    to: AccountInfo<'info>,
+    authority: AccountInfo<'info>,
+    amount: u64,
+    decimals: u8,
+    signer_seeds: &[&[&[u8]]],
+    hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
+    let mut instruction = spl_token_2022::instruction::transfer_checked(
+        token_program.key,
+        from.key,
+        mint.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+        decimals,
+    )?;
+    let mut account_infos = vec![from, mint, to, authority];
+    for account in hook_accounts {
+        instruction.accounts.push(if account.is_writable {
+            AccountMeta::new(*account.key, account.is_signer)
+        } else {
+            AccountMeta::new_readonly(*account.key, account.is_signer)
+        });
+        account_infos.push(account.clone());
+    }
+    solana_program::program::invoke_signed(&instruction, &account_infos, signer_seeds)
+        .map_err(Into::into)
+}
+
+pub fn ensure_no_transfer_hook(mint: &AccountInfo) -> Result<()> {
+    validate_transfer_hook_accounts(mint, &[])
+}
+
+fn validate_transfer_hook_accounts(
+    mint: &AccountInfo,
+    hook_accounts: &[AccountInfo],
+) -> Result<()> {
+    if *mint.owner == anchor_spl::token::ID {
+        require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        );
+        return Ok(());
+    }
+    require!(
+        *mint.owner == anchor_spl::token_2022::ID,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let mint_data = mint.try_borrow_data()?;
+    let mint_state =
+        StateWithExtensions::<anchor_spl::token_2022::spl_token_2022::state::Mint>::unpack(
+            &mint_data,
+        )
+        .map_err(|_| error!(ErrorCode::InvalidHookAccountFraming))?;
+    let hook_program =
+        anchor_spl::token_2022::spl_token_2022::extension::transfer_hook::get_program_id(
+            &mint_state,
+        );
+    match hook_program {
+        Some(_) => require!(
+            hook_accounts.len() >= 2,
+            ErrorCode::InvalidHookAccountFraming
+        ),
+        None => require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        ),
+    }
+    Ok(())
 }
 
 pub fn close_spl_account<'info>(

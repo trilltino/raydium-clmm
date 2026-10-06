@@ -26,6 +26,49 @@ declare_id!("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH");
 #[cfg(not(feature = "devnet"))]
 declare_id!("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
 
+#[cfg(test)]
+mod versioned_swap_abi_tests {
+    use anchor_lang::InstructionData;
+
+    #[test]
+    fn swap_v2_discriminator_and_arguments_remain_unchanged() {
+        let data = crate::instruction::SwapV2 {
+            amount: 0x0102_0304_0506_0708,
+            other_amount_threshold: 0x1112_1314_1516_1718,
+            sqrt_price_limit_x64: 0x2122_2324_2526_2728_292a_2b2c_2d2e_2f30,
+            is_base_input: true,
+        }
+        .data();
+
+        assert_eq!(&data[..8], &[43, 4, 237, 11, 26, 201, 30, 98]);
+        assert_eq!(
+            &data[8..],
+            &[
+                8, 7, 6, 5, 4, 3, 2, 1, 24, 23, 22, 21, 20, 19, 18, 17, 48, 47, 46, 45, 44, 43, 42,
+                41, 40, 39, 38, 37, 36, 35, 34, 33, 1,
+            ]
+        );
+    }
+
+    #[test]
+    fn swap_v3_discriminator_and_slice_counts_are_stable() {
+        let data = crate::instruction::SwapV3 {
+            amount: 1,
+            other_amount_threshold: 2,
+            sqrt_price_limit_x64: 3,
+            is_base_input: true,
+            tick_array_count: 4,
+            bitmap_count: 1,
+            input_hook_account_count: 5,
+            output_hook_account_count: 2,
+        }
+        .data();
+
+        assert_eq!(&data[..8], &[240, 224, 38, 33, 176, 31, 241, 175]);
+        assert_eq!(&data[41..], &[4, 0, 1, 0, 5, 0, 2, 0]);
+    }
+}
+
 pub mod admin {
     #[cfg(not(feature = "localnet"))]
     use super::pubkey;
@@ -672,6 +715,33 @@ pub mod raydium_clmm {
             other_amount_threshold,
             sqrt_price_limit_x64,
             is_base_input,
+        )
+    }
+
+    /// Hook-aware single-pool swap. Remaining accounts are framed as tick arrays,
+    /// bitmap extension accounts, input-transfer hook accounts, and output-transfer
+    /// hook accounts, in that order.
+    pub fn swap_v3<'info>(
+        ctx: Context<'info, SwapSingleV2<'info>>,
+        amount: u64,
+        other_amount_threshold: u64,
+        sqrt_price_limit_x64: u128,
+        is_base_input: bool,
+        tick_array_count: u16,
+        bitmap_count: u16,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::swap_v3(
+            ctx,
+            amount,
+            other_amount_threshold,
+            sqrt_price_limit_x64,
+            is_base_input,
+            tick_array_count,
+            bitmap_count,
+            input_hook_account_count,
+            output_hook_account_count,
         )
     }
 
