@@ -239,7 +239,6 @@ impl TickArrayBitmapExtension {
 
 #[cfg(test)]
 pub mod tick_array_bitmap_extension_test {
-    use std::str::FromStr;
 
     use super::*;
     use crate::{libraries::MAX_TICK, tick_array::TICK_ARRAY_SIZE};
@@ -264,9 +263,7 @@ pub mod tick_array_bitmap_extension_test {
             )
             .0,
         ));
-        let owner = Box::leak(Box::new(
-            Pubkey::from_str("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK").unwrap(),
-        ));
+        let owner = Box::leak(Box::new(crate::id()));
         let lamports_ref: &mut u64 = Box::leak(Box::new(1_000_000_000_u64));
         let data: &mut [u8] =
             Box::leak(vec![0u8; TickArrayBitmapExtension::LEN].into_boxed_slice());

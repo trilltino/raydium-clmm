@@ -23,8 +23,13 @@ solana_security_txt::security_txt! {
 
 #[cfg(feature = "devnet")]
 declare_id!("DRayAUgENGQBKVaX8owNhgzkEDyoHTGVEGHVJT1E9pfH");
-#[cfg(not(feature = "devnet"))]
+#[cfg(feature = "integration")]
+declare_id!("3dNJapViueBArDN3HbWKcEf2u6hfZQ3oDyh3GmUXJ8oD");
+#[cfg(not(any(feature = "devnet", feature = "integration")))]
 declare_id!("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
+
+#[cfg(all(feature = "integration", any(feature = "devnet", feature = "localnet")))]
+compile_error!("the `integration` feature cannot be combined with `devnet` or `localnet`");
 
 #[cfg(test)]
 mod versioned_swap_abi_tests {
@@ -80,7 +85,9 @@ pub mod admin {
     ));
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayqG9RXYi8WHgWEmRQGrUWRWbhjYWYkCRJDd6JBBak");
-    #[cfg(all(not(feature = "devnet"), not(feature = "localnet")))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(all(not(feature = "devnet"), not(feature = "localnet"), not(feature = "integration")))]
     pub const ID: Pubkey = pubkey!("GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ");
 }
 
@@ -88,7 +95,9 @@ pub mod limit_order_admin {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRaypkxM96mjYYnqMmuYjsSL3stHxLf1CvYuTcqxUaav");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("Ray8HHtixhL9zvnokMyELCVGp622PDPJj96zcVC9RWp");
 }
 
@@ -96,7 +105,9 @@ pub mod collect_lamports {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRay9ncC4JVKemPgT4FBaAV2wyTK21CUa7reZKgKdE9B");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("Ray9LdYRLXsHzL8pr3Ceahfiz8MsS2pZagzHo1ckdfJ");
 }
 
@@ -104,7 +115,9 @@ pub mod fund_fee_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayDktajVnqaNPyuYATWmZXyiJkdXpmUPdBYEapgaLY");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("FundHfY8oo8J9KYGyfXFFuQCHe7Z1VBNmsj84eMcdYs4");
 }
 
@@ -112,7 +125,9 @@ pub mod protocol_fee_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayDktajVnqaNPyuYATWmZXyiJkdXpmUPdBYEapgaLY");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("projjosVCPQH49d5em7VYS7fJZzaqKixqKtus7yk416");
 }
 
@@ -854,5 +869,19 @@ pub mod raydium_clmm {
         ctx: Context<'info, CollectExcessLamports<'info>>,
     ) -> Result<()> {
         instructions::collect_excess_lamports(ctx)
+    }
+}
+
+#[cfg(all(test, feature = "integration"))]
+mod integration_feature_tests {
+    use super::*;
+
+    #[test]
+    fn integration_feature_uses_our_program_id_and_admin() {
+        assert_eq!(ID.to_string(), "3dNJapViueBArDN3HbWKcEf2u6hfZQ3oDyh3GmUXJ8oD");
+        let deployer = "QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm";
+        assert_eq!(admin::ID.to_string(), deployer);
+        assert_eq!(protocol_fee_owner::ID.to_string(), deployer);
+        assert_eq!(fund_fee_owner::ID.to_string(), deployer);
     }
 }

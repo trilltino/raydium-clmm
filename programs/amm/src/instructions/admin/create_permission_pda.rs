@@ -7,7 +7,9 @@ pub mod permission_pda_admin {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRaybMsRNbqoKazUkpZVJ5A2zodQVfoUqC4Cm8fv1mgD");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("RayzVBPm6p6xtG7fU3KX4k44UexK4NjewDk2QCwoLqa");
 }
 

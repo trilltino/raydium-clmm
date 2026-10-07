@@ -29,7 +29,9 @@ pub mod frozen_position_nft_authorities {
     /// authorities must be frozen at mint time.
     #[cfg(feature = "devnet")]
     pub const IDS: [Pubkey; 1] = [pubkey!("3TRuL3MFvzHaUfQAb6EsSAbQhWdhmYrKxEiViVkdQfXu")];
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const IDS: [Pubkey; 1] = [pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm")];
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const IDS: [Pubkey; 1] = [pubkey!("2Yq4T3mPNfjtEyTxSbRjRKqLf1pwbTasuCQrWe6QpM7x")];
 }
 
