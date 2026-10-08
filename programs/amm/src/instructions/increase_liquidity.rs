@@ -106,6 +106,8 @@ pub fn increase_liquidity_v1<'info>(
         amount_0_max,
         amount_1_max,
         base_flag,
+        &[],
+        &[],
     )
 }
 
@@ -129,6 +131,8 @@ pub fn increase_liquidity<'b, 'info>(
     amount_0_max: u64,
     amount_1_max: u64,
     base_flag: Option<bool>,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     let mut liquidity = liquidity;
     let pool_state = &mut pool_state_loader.load_mut()?;
@@ -178,6 +182,8 @@ pub fn increase_liquidity<'b, 'info>(
         tick_lower,
         tick_upper,
         base_flag,
+        token_0_hook_accounts,
+        token_1_hook_accounts,
     )?;
 
     personal_position.increase_liquidity(

@@ -199,6 +199,8 @@ pub fn open_position_v1<'info>(
         with_metadata,
         base_flag,
         false,
+        &[],
+        &[],
     )
 }
 
@@ -237,6 +239,8 @@ pub fn open_position<'b, 'info>(
     with_metadata: bool,
     base_flag: Option<bool>,
     use_metadata_extension: bool,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     let position_nft_frozen =
         position_nft_must_freeze(vault_0_mint.as_deref(), vault_1_mint.as_deref());
@@ -327,6 +331,8 @@ pub fn open_position<'b, 'info>(
             tick_lower_index,
             tick_upper_index,
             base_flag,
+            token_0_hook_accounts,
+            token_1_hook_accounts,
         )?;
 
         personal_position.initialize(
@@ -408,6 +414,8 @@ pub fn add_liquidity<'b, 'info>(
     tick_lower_index: i32,
     tick_upper_index: i32,
     base_flag: Option<bool>,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<LiquidityChangeResult> {
     if *liquidity == 0 {
         let base_flag = match base_flag {
@@ -570,7 +578,7 @@ pub fn add_liquidity<'b, 'info>(
     );
     let token_2022_program_opt: Option<AccountInfo> =
         token_program_2022.clone().map(|p| p.to_account_info());
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         payer,
         token_account_0,
         token_vault_0,
@@ -578,8 +586,9 @@ pub fn add_liquidity<'b, 'info>(
         &token_program,
         token_2022_program_opt.clone(),
         amount_0 + amount_0_transfer_fee,
+        token_0_hook_accounts,
     )?;
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         payer,
         token_account_1,
         token_vault_1,
@@ -587,6 +596,7 @@ pub fn add_liquidity<'b, 'info>(
         &token_program,
         token_2022_program_opt.clone(),
         amount_1 + amount_1_transfer_fee,
+        token_1_hook_accounts,
     )?;
     emit!(LiquidityChangeEvent {
         pool_state: pool_state.key(),

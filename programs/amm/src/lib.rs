@@ -72,6 +72,118 @@ mod versioned_swap_abi_tests {
         assert_eq!(&data[..8], &[240, 224, 38, 33, 176, 31, 241, 175]);
         assert_eq!(&data[41..], &[4, 0, 1, 0, 5, 0, 2, 0]);
     }
+
+    #[test]
+    fn hook_aware_liquidity_and_fee_instructions_keep_their_originals_and_add_two_counts() {
+        use anchor_lang::InstructionData;
+        // (original name, hook-aware name, discriminator of each)
+        let pinned: [(&str, [u8; 8], &str, [u8; 8]); 6] = [
+            (
+                "open_position_with_token22_nft",
+                [77, 255, 174, 82, 125, 29, 201, 46],
+                "open_position_with_token22_nft_v3",
+                [56, 135, 245, 13, 111, 36, 199, 77],
+            ),
+            (
+                "open_position_v2",
+                [77, 184, 74, 214, 112, 86, 241, 199],
+                "open_position_v3",
+                [69, 76, 225, 152, 221, 1, 125, 118],
+            ),
+            (
+                "increase_liquidity_v2",
+                [133, 29, 89, 223, 69, 238, 176, 10],
+                "increase_liquidity_v3",
+                [52, 185, 76, 159, 7, 119, 152, 123],
+            ),
+            (
+                "decrease_liquidity_v2",
+                [58, 127, 188, 62, 79, 82, 196, 96],
+                "decrease_liquidity_v3",
+                [66, 13, 152, 227, 153, 113, 54, 216],
+            ),
+            (
+                "collect_protocol_fee",
+                [136, 136, 252, 221, 194, 66, 126, 89],
+                "collect_protocol_fee_v2",
+                [246, 11, 93, 67, 221, 244, 185, 10],
+            ),
+            (
+                "collect_fund_fee",
+                [167, 138, 78, 149, 223, 194, 6, 126],
+                "collect_fund_fee_v2",
+                [21, 250, 142, 236, 215, 232, 49, 184],
+            ),
+        ];
+        use anchor_lang::Discriminator;
+        let digests: [([u8; 8], [u8; 8]); 6] = [
+            (
+                crate::instruction::OpenPositionWithToken22Nft::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::OpenPositionWithToken22NftV3::DISCRIMINATOR.try_into().unwrap(),
+            ),
+            (
+                crate::instruction::OpenPositionV2::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::OpenPositionV3::DISCRIMINATOR.try_into().unwrap(),
+            ),
+            (
+                crate::instruction::IncreaseLiquidityV2::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::IncreaseLiquidityV3::DISCRIMINATOR.try_into().unwrap(),
+            ),
+            (
+                crate::instruction::DecreaseLiquidityV2::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::DecreaseLiquidityV3::DISCRIMINATOR.try_into().unwrap(),
+            ),
+            (
+                crate::instruction::CollectProtocolFee::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::CollectProtocolFeeV2::DISCRIMINATOR.try_into().unwrap(),
+            ),
+            (
+                crate::instruction::CollectFundFee::DISCRIMINATOR.try_into().unwrap(),
+                crate::instruction::CollectFundFeeV2::DISCRIMINATOR.try_into().unwrap(),
+            ),
+        ];
+        for ((original, original_disc, framed, framed_disc), (found_original, found_framed)) in
+            pinned.into_iter().zip(digests)
+        {
+            assert_eq!(found_original, original_disc, "{original}");
+            assert_eq!(found_framed, framed_disc, "{framed}");
+        }
+
+        // The counts are the last two arguments: two little-endian u16s at the end of the data.
+        let increase = crate::instruction::IncreaseLiquidityV3 {
+            liquidity: 1,
+            amount_0_max: 2,
+            amount_1_max: 3,
+            base_flag: None,
+            token_0_hook_account_count: 4,
+            token_1_hook_account_count: 5,
+        }
+        .data();
+        assert_eq!(&increase[..8], &[52, 185, 76, 159, 7, 119, 152, 123]);
+        assert_eq!(&increase[increase.len() - 4..], &[4, 0, 5, 0]);
+
+        let decrease = crate::instruction::DecreaseLiquidityV3 {
+            liquidity: 1,
+            amount_0_min: 2,
+            amount_1_min: 3,
+            token_0_hook_account_count: 6,
+            token_1_hook_account_count: 0,
+        }
+        .data();
+        assert_eq!(&decrease[..8], &[66, 13, 152, 227, 153, 113, 54, 216]);
+        assert_eq!(decrease.len(), 8 + 16 + 8 + 8 + 4);
+        assert_eq!(&decrease[decrease.len() - 4..], &[6, 0, 0, 0]);
+
+        let collect = crate::instruction::CollectFundFeeV2 {
+            amount_0_requested: 7,
+            amount_1_requested: 8,
+            token_0_hook_account_count: 2,
+            token_1_hook_account_count: 3,
+        }
+        .data();
+        assert_eq!(collect.len(), 8 + 8 + 8 + 4);
+        assert_eq!(&collect[collect.len() - 4..], &[2, 0, 3, 0]);
+    }
 }
 
 pub mod admin {
@@ -453,6 +565,24 @@ pub mod raydium_clmm {
         instructions::collect_protocol_fee(ctx, amount_0_requested, amount_1_requested)
     }
 
+    /// Hook-aware `collect_protocol_fee`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_protocol_fee_v2<'info>(
+        ctx: Context<'info, CollectProtocolFee<'info>>,
+        amount_0_requested: u64,
+        amount_1_requested: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_protocol_fee_v2(
+            ctx,
+            amount_0_requested,
+            amount_1_requested,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
+    }
+
     /// Collect the fund fee accrued to the pool
     ///
     /// # Arguments
@@ -467,6 +597,24 @@ pub mod raydium_clmm {
         amount_1_requested: u64,
     ) -> Result<()> {
         instructions::collect_fund_fee(ctx, amount_0_requested, amount_1_requested)
+    }
+
+    /// Hook-aware `collect_fund_fee`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_fund_fee_v2<'info>(
+        ctx: Context<'info, CollectFundFee<'info>>,
+        amount_0_requested: u64,
+        amount_1_requested: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_fund_fee_v2(
+            ctx,
+            amount_0_requested,
+            amount_1_requested,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// #[deprecated(note = "Use `open_position_with_token22_nft` instead.")]
@@ -546,6 +694,71 @@ pub mod raydium_clmm {
             tick_array_upper_start_index,
             with_metadata,
             base_flag,
+        )
+    }
+
+    /// Hook-aware `open_position_with_token22_nft`. Remaining accounts are what that instruction takes (the
+    /// tick-array bitmap extension, if needed), then the token_0 transfer's hook slice, then the token_1
+    /// transfer's.
+    pub fn open_position_with_token22_nft_v3<'info>(
+        ctx: Context<'info, OpenPositionWithToken22Nft<'info>>,
+        tick_lower_index: i32,
+        tick_upper_index: i32,
+        tick_array_lower_start_index: i32,
+        tick_array_upper_start_index: i32,
+        liquidity: u128,
+        amount_0_max: u64,
+        amount_1_max: u64,
+        with_metadata: bool,
+        base_flag: Option<bool>,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::open_position_with_token22_nft_v3(
+            ctx,
+            liquidity,
+            amount_0_max,
+            amount_1_max,
+            tick_lower_index,
+            tick_upper_index,
+            tick_array_lower_start_index,
+            tick_array_upper_start_index,
+            with_metadata,
+            base_flag,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
+    }
+
+    /// Hook-aware `open_position_v2`. Remaining accounts are what `open_position_v2` takes (the tick-array
+    /// bitmap extension, if needed), then the token_0 transfer's hook slice, then the token_1 transfer's.
+    pub fn open_position_v3<'info>(
+        ctx: Context<'info, OpenPositionV2<'info>>,
+        tick_lower_index: i32,
+        tick_upper_index: i32,
+        tick_array_lower_start_index: i32,
+        tick_array_upper_start_index: i32,
+        liquidity: u128,
+        amount_0_max: u64,
+        amount_1_max: u64,
+        with_metadata: bool,
+        base_flag: Option<bool>,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::open_position_v3(
+            ctx,
+            liquidity,
+            amount_0_max,
+            amount_1_max,
+            tick_lower_index,
+            tick_upper_index,
+            tick_array_lower_start_index,
+            tick_array_upper_start_index,
+            with_metadata,
+            base_flag,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
         )
     }
 
@@ -643,6 +856,32 @@ pub mod raydium_clmm {
         instructions::increase_liquidity_v2(ctx, liquidity, amount_0_max, amount_1_max, base_flag)
     }
 
+    /// Hook-aware `increase_liquidity_v2`. Remaining accounts are what `increase_liquidity_v2` takes (the
+    /// tick-array bitmap extension, if needed), then the token_0 transfer's hook slice, then the token_1
+    /// transfer's.
+    pub fn increase_liquidity_v3<'info>(
+        ctx: Context<'info, IncreaseLiquidityV2<'info>>,
+        liquidity: u128,
+        amount_0_max: u64,
+        amount_1_max: u64,
+        base_flag: Option<bool>,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        if liquidity == 0 {
+            require!(base_flag.is_some(), ErrorCode::MissingBaseFlag);
+        }
+        instructions::increase_liquidity_v3(
+            ctx,
+            liquidity,
+            amount_0_max,
+            amount_1_max,
+            base_flag,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
+    }
+
     /// #[deprecated(note = "Use `decrease_liquidity_v2` instead.")]
     /// Decreases liquidity for an existing position
     ///
@@ -678,6 +917,28 @@ pub mod raydium_clmm {
         amount_1_min: u64,
     ) -> Result<()> {
         instructions::decrease_liquidity_v2(ctx, liquidity, amount_0_min, amount_1_min)
+    }
+
+    /// Hook-aware `decrease_liquidity_v2` (with zero liquidity it collects the position's fees). Remaining
+    /// accounts are what `decrease_liquidity_v2` takes (the tick-array bitmap extension, then reward
+    /// accounts), then the token_0 transfer's hook slice, then the token_1 transfer's. Reward mints with a
+    /// Transfer Hook are not supported.
+    pub fn decrease_liquidity_v3<'info>(
+        ctx: Context<'info, DecreaseLiquidityV2<'info>>,
+        liquidity: u128,
+        amount_0_min: u64,
+        amount_1_min: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::decrease_liquidity_v3(
+            ctx,
+            liquidity,
+            amount_0_min,
+            amount_1_min,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// #[deprecated(note = "Use `swap_v2` instead.")]

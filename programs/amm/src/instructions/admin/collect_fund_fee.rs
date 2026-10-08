@@ -64,10 +64,50 @@ pub fn collect_fund_fee(
     amount_0_requested: u64,
     amount_1_requested: u64,
 ) -> Result<()> {
+    collect_fund_fee_inner(
+        &ctx.accounts,
+        amount_0_requested,
+        amount_1_requested,
+        &[],
+        &[],
+    )
+}
+
+/// `collect_fund_fee` for a pool with Transfer Hook mints. The remaining accounts are the token_0
+/// transfer's hook slice, then the token_1 transfer's; each count is the whole slice.
+pub fn collect_fund_fee_v2<'info>(
+    ctx: Context<'info, CollectFundFee<'info>>,
+    amount_0_requested: u64,
+    amount_1_requested: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (rest, token_0_hook_accounts, token_1_hook_accounts) = split_hook_tail(
+        ctx.remaining_accounts,
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    require!(rest.is_empty(), ErrorCode::InvalidHookAccountFraming);
+    collect_fund_fee_inner(
+        &ctx.accounts,
+        amount_0_requested,
+        amount_1_requested,
+        token_0_hook_accounts,
+        token_1_hook_accounts,
+    )
+}
+
+fn collect_fund_fee_inner<'info>(
+    accounts: &CollectFundFee<'info>,
+    amount_0_requested: u64,
+    amount_1_requested: u64,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
     let amount_0: u64;
     let amount_1: u64;
     {
-        let mut pool_state = ctx.accounts.pool_state.load_mut()?;
+        let mut pool_state = accounts.pool_state.load_mut()?;
         amount_0 = amount_0_requested.min(pool_state.fund_fees_token_0);
         amount_1 = amount_1_requested.min(pool_state.fund_fees_token_1);
 
@@ -80,30 +120,32 @@ pub fn collect_fund_fee(
             .checked_sub(amount_1)
             .ok_or(ErrorCode::CalculateOverflow)?;
     }
-    transfer_from_pool_vault_to_user(
-        &ctx.accounts.pool_state,
-        &ctx.accounts.token_vault_0.to_account_info(),
-        &ctx.accounts.recipient_token_account_0.to_account_info(),
-        Some(ctx.accounts.vault_0_mint.clone()),
-        &ctx.accounts.token_program,
-        Some(ctx.accounts.token_program_2022.to_account_info()),
+    transfer_from_pool_vault_to_user_with_hook_accounts(
+        &accounts.pool_state,
+        &accounts.token_vault_0.to_account_info(),
+        &accounts.recipient_token_account_0.to_account_info(),
+        Some(accounts.vault_0_mint.clone()),
+        &accounts.token_program,
+        Some(accounts.token_program_2022.to_account_info()),
         amount_0,
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
-        &ctx.accounts.pool_state,
-        &ctx.accounts.token_vault_1.to_account_info(),
-        &ctx.accounts.recipient_token_account_1.to_account_info(),
-        Some(ctx.accounts.vault_1_mint.clone()),
-        &ctx.accounts.token_program,
-        Some(ctx.accounts.token_program_2022.to_account_info()),
+    transfer_from_pool_vault_to_user_with_hook_accounts(
+        &accounts.pool_state,
+        &accounts.token_vault_1.to_account_info(),
+        &accounts.recipient_token_account_1.to_account_info(),
+        Some(accounts.vault_1_mint.clone()),
+        &accounts.token_program,
+        Some(accounts.token_program_2022.to_account_info()),
         amount_1,
+        token_1_hook_accounts,
     )?;
 
     emit!(CollectProtocolFeeEvent {
-        pool_state: ctx.accounts.pool_state.key(),
-        recipient_token_account_0: ctx.accounts.recipient_token_account_0.key(),
-        recipient_token_account_1: ctx.accounts.recipient_token_account_1.key(),
+        pool_state: accounts.pool_state.key(),
+        recipient_token_account_0: accounts.recipient_token_account_0.key(),
+        recipient_token_account_1: accounts.recipient_token_account_1.key(),
         amount_0,
         amount_1,
     });

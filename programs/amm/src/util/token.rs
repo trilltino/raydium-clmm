@@ -814,3 +814,98 @@ pub fn position_nft_must_freeze(
         };
     is_restricted_mint(vault_0_mint) || is_restricted_mint(vault_1_mint)
 }
+
+/// Where the Transfer Hook accounts sit in the remaining accounts of a liquidity or fee instruction.
+///
+/// They are always the **last** accounts: the token_0 transfer's slice, then the token_1 transfer's
+/// slice, after whatever the original instruction takes (the tick-array bitmap extension, reward
+/// accounts). Each count is the whole slice (extras, hook program, validation list), so it is 0 (no hook
+/// for that token) or at least 2. Returns the ranges of the original accounts, of token_0's slice and of
+/// token_1's slice.
+pub fn hook_tail_ranges(
+    remaining_account_count: usize,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<(
+    std::ops::Range<usize>,
+    std::ops::Range<usize>,
+    std::ops::Range<usize>,
+)> {
+    require!(
+        (token_0_hook_account_count == 0 || token_0_hook_account_count >= 2)
+            && (token_1_hook_account_count == 0 || token_1_hook_account_count >= 2),
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let tail = usize::from(token_0_hook_account_count)
+        .checked_add(usize::from(token_1_hook_account_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    require!(
+        tail <= remaining_account_count,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let rest_end = remaining_account_count - tail;
+    let token_0_end = rest_end + usize::from(token_0_hook_account_count);
+    Ok((
+        0..rest_end,
+        rest_end..token_0_end,
+        token_0_end..remaining_account_count,
+    ))
+}
+
+/// [`hook_tail_ranges`] applied to the remaining accounts themselves.
+pub fn split_hook_tail<'a, 'info>(
+    remaining_accounts: &'a [AccountInfo<'info>],
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<(
+    &'a [AccountInfo<'info>],
+    &'a [AccountInfo<'info>],
+    &'a [AccountInfo<'info>],
+)> {
+    let (rest, token_0, token_1) = hook_tail_ranges(
+        remaining_accounts.len(),
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    Ok((
+        &remaining_accounts[rest],
+        &remaining_accounts[token_0],
+        &remaining_accounts[token_1],
+    ))
+}
+
+#[cfg(test)]
+mod hook_tail_tests {
+    use super::hook_tail_ranges;
+
+    #[test]
+    fn the_hook_slices_are_the_last_accounts_token_0_first() {
+        let (rest, token_0, token_1) = hook_tail_ranges(9, 3, 2).unwrap();
+        assert_eq!(rest, 0..4);
+        assert_eq!(token_0, 4..7);
+        assert_eq!(token_1, 7..9);
+    }
+
+    #[test]
+    fn an_unhooked_token_has_an_empty_slice() {
+        let (rest, token_0, token_1) = hook_tail_ranges(5, 0, 3).unwrap();
+        assert_eq!((rest, token_0, token_1), (0..2, 2..2, 2..5));
+        let (rest, token_0, token_1) = hook_tail_ranges(2, 0, 0).unwrap();
+        assert_eq!((rest, token_0, token_1), (0..2, 2..2, 2..2));
+    }
+
+    #[test]
+    fn a_slice_is_never_one_account_and_never_longer_than_the_accounts() {
+        assert!(hook_tail_ranges(4, 1, 0).is_err());
+        assert!(hook_tail_ranges(4, 0, 1).is_err());
+        assert!(hook_tail_ranges(3, 2, 2).is_err());
+        assert!(hook_tail_ranges(0, 2, 0).is_err());
+    }
+
+    #[test]
+    fn the_counts_are_checked_against_the_accounts_at_the_largest_sizes() {
+        let (rest, token_0, token_1) = hook_tail_ranges(131_070, u16::MAX, u16::MAX).unwrap();
+        assert_eq!((rest.len(), token_0.len(), token_1.len()), (0, 65_535, 65_535));
+        assert!(hook_tail_ranges(131_069, u16::MAX, u16::MAX).is_err());
+    }
+}

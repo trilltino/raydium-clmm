@@ -121,5 +121,48 @@ pub fn decrease_liquidity_v2<'info>(
         liquidity,
         amount_0_min,
         amount_1_min,
+        &[],
+        &[],
+    )
+}
+
+/// `decrease_liquidity_v2` for a pool with Transfer Hook mints; with `liquidity == 0` it collects the
+/// position's fees. The remaining accounts are what `decrease_liquidity_v2` takes (the tick-array bitmap
+/// extension, then the reward accounts), then the token_0 transfer's hook slice, then the token_1
+/// transfer's; each count is the whole slice. Reward mints with a Transfer Hook are not supported.
+pub fn decrease_liquidity_v3<'info>(
+    ctx: Context<'info, DecreaseLiquidityV2<'info>>,
+    liquidity: u128,
+    amount_0_min: u64,
+    amount_1_min: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, token_0_hook_accounts, token_1_hook_accounts) =
+        crate::util::split_hook_tail(
+            ctx.remaining_accounts,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )?;
+    decrease_liquidity(
+        &ctx.accounts.pool_state,
+        &mut ctx.accounts.personal_position,
+        &ctx.accounts.token_vault_0.to_account_info(),
+        &ctx.accounts.token_vault_1.to_account_info(),
+        &ctx.accounts.tick_array_lower,
+        &ctx.accounts.tick_array_upper,
+        &ctx.accounts.recipient_token_account_0.to_account_info(),
+        &ctx.accounts.recipient_token_account_1.to_account_info(),
+        &ctx.accounts.token_program,
+        Some(ctx.accounts.token_program_2022.clone()),
+        Some(ctx.accounts.memo_program.clone()),
+        Some(ctx.accounts.vault_0_mint.clone()),
+        Some(ctx.accounts.vault_1_mint.clone()),
+        remaining_accounts,
+        liquidity,
+        amount_0_min,
+        amount_1_min,
+        token_0_hook_accounts,
+        token_1_hook_accounts,
     )
 }

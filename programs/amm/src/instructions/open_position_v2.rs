@@ -196,5 +196,73 @@ pub fn open_position_v2<'info>(
         with_metadata,
         base_flag,
         false,
+        &[],
+        &[],
+    )
+}
+
+/// `open_position_v2` for a pool with Transfer Hook mints. The remaining accounts are what
+/// `open_position_v2` takes (the tick-array bitmap extension, if the ticks need it), then the
+/// token_0 transfer's hook slice, then the token_1 transfer's; each count is the whole slice.
+pub fn open_position_v3<'info>(
+    ctx: Context<'info, OpenPositionV2<'info>>,
+    liquidity: u128,
+    amount_0_max: u64,
+    amount_1_max: u64,
+    tick_lower_index: i32,
+    tick_upper_index: i32,
+    tick_array_lower_start_index: i32,
+    tick_array_upper_start_index: i32,
+    with_metadata: bool,
+    base_flag: Option<bool>,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, token_0_hook_accounts, token_1_hook_accounts) =
+        crate::util::split_hook_tail(
+            ctx.remaining_accounts,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )?;
+    require!(
+        !ctx.accounts.token_account_0.is_frozen() && !ctx.accounts.token_account_1.is_frozen(),
+        ErrorCode::NotApproved
+    );
+    open_position(
+        &ctx.accounts.payer,
+        &ctx.accounts.position_nft_owner,
+        &ctx.accounts.position_nft_mint.to_account_info(),
+        &ctx.accounts.position_nft_account.to_account_info(),
+        Some(&ctx.accounts.metadata_account),
+        &ctx.accounts.pool_state,
+        &ctx.accounts.tick_array_lower,
+        &ctx.accounts.tick_array_upper,
+        &mut ctx.accounts.personal_position,
+        &ctx.accounts.token_account_0.to_account_info(),
+        &ctx.accounts.token_account_1.to_account_info(),
+        &ctx.accounts.token_vault_0.to_account_info(),
+        &ctx.accounts.token_vault_1.to_account_info(),
+        &ctx.accounts.rent,
+        &ctx.accounts.system_program,
+        &ctx.accounts.token_program,
+        &ctx.accounts.associated_token_program,
+        Some(&ctx.accounts.metadata_program),
+        Some(&ctx.accounts.token_program_2022),
+        Some(ctx.accounts.vault_0_mint.clone()),
+        Some(ctx.accounts.vault_1_mint.clone()),
+        remaining_accounts,
+        ctx.bumps.personal_position,
+        liquidity,
+        amount_0_max,
+        amount_1_max,
+        tick_lower_index,
+        tick_upper_index,
+        tick_array_lower_start_index,
+        tick_array_upper_start_index,
+        with_metadata,
+        base_flag,
+        false,
+        token_0_hook_accounts,
+        token_1_hook_accounts,
     )
 }

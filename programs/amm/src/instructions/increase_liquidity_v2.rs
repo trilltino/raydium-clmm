@@ -117,5 +117,49 @@ pub fn increase_liquidity_v2<'info>(
         amount_0_max,
         amount_1_max,
         base_flag,
+        &[],
+        &[],
+    )
+}
+
+/// `increase_liquidity_v2` for a pool with Transfer Hook mints. The remaining accounts are what
+/// `increase_liquidity_v2` takes (the tick-array bitmap extension, if the ticks need it), then the
+/// token_0 transfer's hook slice, then the token_1 transfer's; each count is the whole slice.
+pub fn increase_liquidity_v3<'info>(
+    ctx: Context<'info, IncreaseLiquidityV2<'info>>,
+    liquidity: u128,
+    amount_0_max: u64,
+    amount_1_max: u64,
+    base_flag: Option<bool>,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, token_0_hook_accounts, token_1_hook_accounts) =
+        crate::util::split_hook_tail(
+            ctx.remaining_accounts,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )?;
+    increase_liquidity(
+        &ctx.accounts.nft_owner,
+        &ctx.accounts.pool_state,
+        &mut ctx.accounts.personal_position,
+        &ctx.accounts.tick_array_lower,
+        &ctx.accounts.tick_array_upper,
+        &ctx.accounts.token_account_0.to_account_info(),
+        &ctx.accounts.token_account_1.to_account_info(),
+        &ctx.accounts.token_vault_0.to_account_info(),
+        &ctx.accounts.token_vault_1.to_account_info(),
+        &ctx.accounts.token_program,
+        Some(&ctx.accounts.token_program_2022),
+        Some(ctx.accounts.vault_0_mint.clone()),
+        Some(ctx.accounts.vault_1_mint.clone()),
+        remaining_accounts,
+        liquidity,
+        amount_0_max,
+        amount_1_max,
+        base_flag,
+        token_0_hook_accounts,
+        token_1_hook_accounts,
     )
 }

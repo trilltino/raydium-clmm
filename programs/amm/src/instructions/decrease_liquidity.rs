@@ -3,7 +3,7 @@ use crate::error::ErrorCode;
 use crate::instructions::LiquidityChangeResult;
 use crate::states::*;
 use crate::util::get_recent_epoch;
-use crate::util::{self, transfer_from_pool_vault_to_user};
+use crate::util::{self, transfer_from_pool_vault_to_user, transfer_from_pool_vault_to_user_with_hook_accounts};
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, TokenAccount};
 use anchor_spl::token_interface::{self, Mint, Token2022};
@@ -107,6 +107,8 @@ pub fn decrease_liquidity_v1<'info>(
         liquidity,
         amount_0_min,
         amount_1_min,
+        &[],
+        &[],
     )
 }
 
@@ -128,6 +130,8 @@ pub fn decrease_liquidity<'b, 'info>(
     liquidity: u128,
     amount_0_min: u64,
     amount_1_min: u64,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     // if accounts.memo_program.is_some() {
     //     let memp_program = accounts.memo_program.as_ref().unwrap().to_account_info();
@@ -232,7 +236,7 @@ pub fn decrease_liquidity<'b, 'info>(
     let token_2022_program_opt: Option<AccountInfo> =
         token_program_2022.clone().map(|p| p.to_account_info());
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         pool_state_loader,
         &token_vault_0.to_account_info(),
         recipient_token_account_0,
@@ -240,9 +244,10 @@ pub fn decrease_liquidity<'b, 'info>(
         token_program,
         token_2022_program_opt.clone(),
         transfer_amount_0,
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         pool_state_loader,
         &token_vault_1.to_account_info(),
         recipient_token_account_1,
@@ -250,6 +255,7 @@ pub fn decrease_liquidity<'b, 'info>(
         token_program,
         token_2022_program_opt.clone(),
         transfer_amount_1,
+        token_1_hook_accounts,
     )?;
 
     let reward_amounts = collect_rewards(
