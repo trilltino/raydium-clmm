@@ -1,6 +1,8 @@
 use crate::error::ErrorCode;
 use crate::libraries::{big_num::U128, fixed_point_64, full_math::MulDiv};
-use crate::util::{create_token_vault_account, transfer_from_user_to_pool_vault};
+use crate::util::{
+    create_token_vault_account, split_hook_tail, transfer_from_user_to_pool_vault_with_hook_accounts,
+};
 use crate::{states::*, util};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
@@ -96,12 +98,32 @@ impl InitializeRewardParam {
     }
 }
 
-pub fn initialize_reward(
-    ctx: Context<InitializeReward>,
+pub fn initialize_reward<'info>(
+    ctx: Context<'info, InitializeReward<'info>>,
     param: InitializeRewardParam,
 ) -> Result<()> {
+    initialize_reward_inner(ctx, param, 0)
+}
+
+/// Hook-aware `initialize_reward`: the reward mint may have a Transfer Hook. Remaining accounts: what
+/// `initialize_reward` takes (the mint's support record), then the funding transfer's hook slice.
+pub fn initialize_reward_v2<'info>(
+    ctx: Context<'info, InitializeReward<'info>>,
+    param: InitializeRewardParam,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    initialize_reward_inner(ctx, param, reward_hook_account_count)
+}
+
+fn initialize_reward_inner<'info>(
+    ctx: Context<'info, InitializeReward<'info>>,
+    param: InitializeRewardParam,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, reward_hook_accounts, _) =
+        split_hook_tail(ctx.remaining_accounts, reward_hook_account_count, 0)?;
     let mint_associated_is_initialized = util::support_mint_associated_is_initialized(
-        &ctx.remaining_accounts,
+        remaining_accounts,
         &ctx.accounts.reward_token_mint,
     )?;
     if !util::is_supported_mint(
@@ -172,7 +194,7 @@ pub fn initialize_reward(
         &operation_state,
     )?;
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         &ctx.accounts.reward_funder,
         &ctx.accounts.funder_token_account.to_account_info(),
         &ctx.accounts.reward_token_vault.to_account_info(),
@@ -180,6 +202,7 @@ pub fn initialize_reward(
         &ctx.accounts.reward_token_program.to_account_info(),
         Some(ctx.accounts.reward_token_program.to_account_info()),
         reward_amount_with_transfer_fee,
+        reward_hook_accounts,
     )?;
 
     Ok(())

@@ -172,6 +172,33 @@ mod versioned_swap_abi_tests {
         assert_eq!(settle.len(), 8 + 4);
         assert_eq!(&settle[8..], &[0, 0, 4, 0]);
 
+        // The reward instructions: the original and the hook-aware one, pinned.
+        let rewards: [(&[u8], [u8; 8]); 7] = [
+            (crate::instruction::InitializeReward::DISCRIMINATOR, [95, 135, 192, 196, 242, 129, 230, 68]),
+            (crate::instruction::InitializeRewardV2::DISCRIMINATOR, [91, 1, 77, 50, 235, 229, 133, 49]),
+            (crate::instruction::SetRewardParams::DISCRIMINATOR, [112, 52, 167, 75, 32, 201, 211, 137]),
+            (crate::instruction::SetRewardParamsV2::DISCRIMINATOR, [188, 21, 4, 15, 223, 145, 7, 194]),
+            (crate::instruction::CollectRemainingRewards::DISCRIMINATOR, [18, 237, 166, 197, 34, 16, 213, 144]),
+            (crate::instruction::CollectRemainingRewardsV2::DISCRIMINATOR, [194, 24, 63, 178, 217, 208, 73, 63]),
+            (crate::instruction::DecreaseLiquidityV4::DISCRIMINATOR, [226, 126, 121, 44, 246, 51, 45, 43]),
+        ];
+        for (found, pinned) in rewards {
+            assert_eq!(found, &pinned[..]);
+        }
+        let decrease_v4 = crate::instruction::DecreaseLiquidityV4 {
+            liquidity: 1,
+            amount_0_min: 2,
+            amount_1_min: 3,
+            token_0_hook_account_count: 4,
+            token_1_hook_account_count: 0,
+            reward_0_hook_account_count: 5,
+            reward_1_hook_account_count: 0,
+            reward_2_hook_account_count: 6,
+        }
+        .data();
+        assert_eq!(decrease_v4.len(), 8 + 16 + 8 + 8 + 10);
+        assert_eq!(&decrease_v4[decrease_v4.len() - 10..], &[4, 0, 0, 0, 5, 0, 0, 0, 6, 0]);
+
         // The counts are the last two arguments: two little-endian u16s at the end of the data.
         let increase = crate::instruction::IncreaseLiquidityV3 {
             liquidity: 1,
@@ -514,11 +541,21 @@ pub mod raydium_clmm {
     /// * `end_time` - reward end timestamp
     /// * `emissions_per_second_x64` - Token reward per second are earned per unit of liquidity.
     ///
-    pub fn initialize_reward(
-        ctx: Context<InitializeReward>,
+    pub fn initialize_reward<'info>(
+        ctx: Context<'info, InitializeReward<'info>>,
         param: InitializeRewardParam,
     ) -> Result<()> {
         instructions::initialize_reward(ctx, param)
+    }
+
+    /// Hook-aware `initialize_reward`: the reward mint may have a Transfer Hook. Remaining accounts are what
+    /// `initialize_reward` takes (the mint's support record), then the funding transfer's hook slice.
+    pub fn initialize_reward_v2<'info>(
+        ctx: Context<'info, InitializeReward<'info>>,
+        param: InitializeRewardParam,
+        reward_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::initialize_reward_v2(ctx, param, reward_hook_account_count)
     }
 
     /// Collect remaining reward token for reward founder
@@ -528,11 +565,21 @@ pub mod raydium_clmm {
     /// * `ctx` - The context of accounts
     /// * `reward_index` - the index to reward info
     ///
-    pub fn collect_remaining_rewards(
-        ctx: Context<CollectRemainingRewards>,
+    pub fn collect_remaining_rewards<'info>(
+        ctx: Context<'info, CollectRemainingRewards<'info>>,
         reward_index: u8,
     ) -> Result<()> {
         instructions::collect_remaining_rewards(ctx, reward_index)
+    }
+
+    /// Hook-aware `collect_remaining_rewards`: the only remaining accounts are the payout transfer's hook
+    /// slice.
+    pub fn collect_remaining_rewards_v2<'info>(
+        ctx: Context<'info, CollectRemainingRewards<'info>>,
+        reward_index: u8,
+        reward_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_remaining_rewards_v2(ctx, reward_index, reward_hook_account_count)
     }
 
     /// Update rewards info of the given pool, can be called for everyone
@@ -569,6 +616,27 @@ pub mod raydium_clmm {
             emissions_per_second_x64,
             open_time,
             end_time,
+        )
+    }
+
+    /// Hook-aware `set_reward_params`: the reward mint may have a Transfer Hook. Remaining accounts are what
+    /// `set_reward_params` takes (reward vault, authority token account, reward mint), then the top-up
+    /// transfer's hook slice.
+    pub fn set_reward_params_v2<'info>(
+        ctx: Context<'info, SetRewardParams<'info>>,
+        reward_index: u8,
+        emissions_per_second_x64: u128,
+        open_time: u64,
+        end_time: u64,
+        reward_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::set_reward_params_v2(
+            ctx,
+            reward_index,
+            emissions_per_second_x64,
+            open_time,
+            end_time,
+            reward_hook_account_count,
         )
     }
 
@@ -961,6 +1029,35 @@ pub mod raydium_clmm {
             amount_1_min,
             token_0_hook_account_count,
             token_1_hook_account_count,
+        )
+    }
+
+    /// `decrease_liquidity_v3` for a pool whose reward mints may have a Transfer Hook too. Remaining
+    /// accounts are what `decrease_liquidity_v2` takes (the tick-array bitmap extension, then the reward
+    /// accounts), then the hook slices of the token_0, token_1, reward 0, reward 1 and reward 2 transfers.
+    pub fn decrease_liquidity_v4<'info>(
+        ctx: Context<'info, DecreaseLiquidityV2<'info>>,
+        liquidity: u128,
+        amount_0_min: u64,
+        amount_1_min: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+        reward_0_hook_account_count: u16,
+        reward_1_hook_account_count: u16,
+        reward_2_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::decrease_liquidity_v4(
+            ctx,
+            liquidity,
+            amount_0_min,
+            amount_1_min,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+            [
+                reward_0_hook_account_count,
+                reward_1_hook_account_count,
+                reward_2_hook_account_count,
+            ],
         )
     }
 

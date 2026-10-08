@@ -852,6 +852,38 @@ pub fn hook_tail_ranges(
     ))
 }
 
+/// Split `counts.len()` hook slices off the end of the remaining accounts, in the order of `counts`: the
+/// first slice is the first count's, the last slice ends the accounts. Each count is 0 or at least 2.
+/// Returns what is left in front of them and the slices.
+pub fn split_hook_slices<'a, 'info>(
+    remaining_accounts: &'a [AccountInfo<'info>],
+    counts: &[u16],
+) -> Result<(&'a [AccountInfo<'info>], Vec<&'a [AccountInfo<'info>]>)> {
+    let mut total = 0usize;
+    for count in counts {
+        require!(
+            *count == 0 || *count >= 2,
+            ErrorCode::InvalidHookAccountFraming
+        );
+        total = total
+            .checked_add(usize::from(*count))
+            .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    }
+    require!(
+        total <= remaining_accounts.len(),
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let rest_end = remaining_accounts.len() - total;
+    let mut start = rest_end;
+    let mut slices = Vec::with_capacity(counts.len());
+    for count in counts {
+        let end = start + usize::from(*count);
+        slices.push(&remaining_accounts[start..end]);
+        start = end;
+    }
+    Ok((&remaining_accounts[..rest_end], slices))
+}
+
 /// [`hook_tail_ranges`] applied to the remaining accounts themselves.
 pub fn split_hook_tail<'a, 'info>(
     remaining_accounts: &'a [AccountInfo<'info>],

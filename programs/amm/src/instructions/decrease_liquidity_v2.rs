@@ -123,6 +123,7 @@ pub fn decrease_liquidity_v2<'info>(
         amount_1_min,
         &[],
         &[],
+        &[],
     )
 }
 
@@ -164,5 +165,52 @@ pub fn decrease_liquidity_v3<'info>(
         amount_1_min,
         token_0_hook_accounts,
         token_1_hook_accounts,
+        &[],
+    )
+}
+
+/// `decrease_liquidity_v3` for a pool whose **reward** mints may have a Transfer Hook too. The remaining
+/// accounts are what `decrease_liquidity_v2` takes (the tick-array bitmap extension, then one group of
+/// reward vault, recipient account and reward mint per initialised reward), then the hook slices of the
+/// token_0, token_1, reward 0, reward 1 and reward 2 transfers, in that order. A slice is empty for a
+/// token without a hook and for a reward that is not initialised.
+pub fn decrease_liquidity_v4<'info>(
+    ctx: Context<'info, DecreaseLiquidityV2<'info>>,
+    liquidity: u128,
+    amount_0_min: u64,
+    amount_1_min: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+    reward_hook_account_counts: [u16; 3],
+) -> Result<()> {
+    let counts = [
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+        reward_hook_account_counts[0],
+        reward_hook_account_counts[1],
+        reward_hook_account_counts[2],
+    ];
+    let (remaining_accounts, slices) = crate::util::split_hook_slices(ctx.remaining_accounts, &counts)?;
+    decrease_liquidity(
+        &ctx.accounts.pool_state,
+        &mut ctx.accounts.personal_position,
+        &ctx.accounts.token_vault_0.to_account_info(),
+        &ctx.accounts.token_vault_1.to_account_info(),
+        &ctx.accounts.tick_array_lower,
+        &ctx.accounts.tick_array_upper,
+        &ctx.accounts.recipient_token_account_0.to_account_info(),
+        &ctx.accounts.recipient_token_account_1.to_account_info(),
+        &ctx.accounts.token_program,
+        Some(ctx.accounts.token_program_2022.clone()),
+        Some(ctx.accounts.memo_program.clone()),
+        Some(ctx.accounts.vault_0_mint.clone()),
+        Some(ctx.accounts.vault_1_mint.clone()),
+        remaining_accounts,
+        liquidity,
+        amount_0_min,
+        amount_1_min,
+        slices[0],
+        slices[1],
+        &slices[2..],
     )
 }

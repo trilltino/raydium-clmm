@@ -1,6 +1,6 @@
 use crate::error::ErrorCode;
 use crate::states::*;
-use crate::util::transfer_from_pool_vault_to_user;
+use crate::util::{split_hook_tail, transfer_from_pool_vault_to_user_with_hook_accounts};
 use anchor_lang::prelude::*;
 use anchor_spl::{
     memo::Memo,
@@ -38,10 +38,34 @@ pub struct CollectRemainingRewards<'info> {
     pub memo_program: Program<'info, Memo>,
 }
 
-pub fn collect_remaining_rewards(
-    ctx: Context<CollectRemainingRewards>,
+pub fn collect_remaining_rewards<'info>(
+    ctx: Context<'info, CollectRemainingRewards<'info>>,
     reward_index: u8,
 ) -> Result<()> {
+    collect_remaining_rewards_inner(ctx, reward_index, 0)
+}
+
+/// Hook-aware `collect_remaining_rewards`: the reward mint may have a Transfer Hook. The only remaining
+/// accounts are the payout transfer's hook slice.
+pub fn collect_remaining_rewards_v2<'info>(
+    ctx: Context<'info, CollectRemainingRewards<'info>>,
+    reward_index: u8,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    collect_remaining_rewards_inner(ctx, reward_index, reward_hook_account_count)
+}
+
+fn collect_remaining_rewards_inner<'info>(
+    ctx: Context<'info, CollectRemainingRewards<'info>>,
+    reward_index: u8,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, reward_hook_accounts, _) =
+        split_hook_tail(ctx.remaining_accounts, reward_hook_account_count, 0)?;
+    require!(
+        remaining_accounts.is_empty(),
+        ErrorCode::InvalidHookAccountFraming
+    );
     // invoke_memo_instruction(
     //     COLLECT_REMAINING_MEMO_MSG,
     //     ctx.accounts.memo_program.to_account_info(),
@@ -53,7 +77,7 @@ pub fn collect_remaining_rewards(
         reward_index,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         &ctx.accounts.pool_state,
         &ctx.accounts.reward_token_vault.to_account_info(),
         &ctx.accounts.funder_token_account.to_account_info(),
@@ -61,6 +85,7 @@ pub fn collect_remaining_rewards(
         &ctx.accounts.token_program,
         Some(ctx.accounts.token_program_2022.to_account_info()),
         amount_remaining,
+        reward_hook_accounts,
     )?;
 
     Ok(())

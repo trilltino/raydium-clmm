@@ -1,7 +1,7 @@
 use crate::error::ErrorCode;
 use crate::libraries::{big_num::U128, fixed_point_64, full_math::MulDiv};
 use crate::states::pool::{reward_period_limit, PoolState, REWARD_NUM};
-use crate::util::transfer_from_user_to_pool_vault;
+use crate::util::{split_hook_tail, transfer_from_user_to_pool_vault_with_hook_accounts};
 use crate::{states::*, util};
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
@@ -45,6 +45,40 @@ pub fn set_reward_params<'info>(
     open_time: u64,
     end_time: u64,
 ) -> Result<()> {
+    set_reward_params_inner(ctx, reward_index, emissions_per_second_x64, open_time, end_time, 0)
+}
+
+/// Hook-aware `set_reward_params`: the reward mint may have a Transfer Hook. Remaining accounts: what
+/// `set_reward_params` takes (the reward vault, the authority's token account and the reward mint), then
+/// the top-up transfer's hook slice.
+pub fn set_reward_params_v2<'info>(
+    ctx: Context<'info, SetRewardParams<'info>>,
+    reward_index: u8,
+    emissions_per_second_x64: u128,
+    open_time: u64,
+    end_time: u64,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    set_reward_params_inner(
+        ctx,
+        reward_index,
+        emissions_per_second_x64,
+        open_time,
+        end_time,
+        reward_hook_account_count,
+    )
+}
+
+fn set_reward_params_inner<'info>(
+    ctx: Context<'info, SetRewardParams<'info>>,
+    reward_index: u8,
+    emissions_per_second_x64: u128,
+    open_time: u64,
+    end_time: u64,
+    reward_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, reward_hook_accounts, _) =
+        split_hook_tail(ctx.remaining_accounts, reward_hook_account_count, 0)?;
     require!(
         (reward_index as usize) < REWARD_NUM,
         ErrorCode::InvalidRewardIndex
@@ -108,7 +142,7 @@ pub fn set_reward_params<'info>(
     pool_state.reward_infos[reward_index as usize] = reward_info;
 
     if reward_amount > 0 {
-        let mut remaining_accounts = ctx.remaining_accounts.iter();
+        let mut remaining_accounts = remaining_accounts.iter();
 
         let reward_token_vault = InterfaceAccount::<TokenAccount>::try_from(
             remaining_accounts.next().ok_or(ErrorCode::AccountLack)?,
@@ -129,7 +163,7 @@ pub fn set_reward_params<'info>(
             .checked_add(transfer_fee)
             .ok_or(ErrorCode::CalculateOverflow)?;
 
-        transfer_from_user_to_pool_vault(
+        transfer_from_user_to_pool_vault_with_hook_accounts(
             &ctx.accounts.authority,
             &authority_token_account.to_account_info(),
             &reward_token_vault.to_account_info(),
@@ -137,6 +171,7 @@ pub fn set_reward_params<'info>(
             &ctx.accounts.token_program,
             Some(ctx.accounts.token_program_2022.to_account_info()),
             reward_amount_with_transfer_fee,
+            reward_hook_accounts,
         )?;
     }
 

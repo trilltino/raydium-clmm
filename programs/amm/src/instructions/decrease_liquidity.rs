@@ -109,6 +109,7 @@ pub fn decrease_liquidity_v1<'info>(
         amount_1_min,
         &[],
         &[],
+        &[],
     )
 }
 
@@ -132,6 +133,7 @@ pub fn decrease_liquidity<'b, 'info>(
     amount_1_min: u64,
     token_0_hook_accounts: &[AccountInfo<'info>],
     token_1_hook_accounts: &[AccountInfo<'info>],
+    reward_hook_accounts: &[&[AccountInfo<'info>]],
 ) -> Result<()> {
     // if accounts.memo_program.is_some() {
     //     let memp_program = accounts.memo_program.as_ref().unwrap().to_account_info();
@@ -269,6 +271,7 @@ pub fn decrease_liquidity<'b, 'info>(
         } else {
             true
         },
+        reward_hook_accounts,
     )?;
     emit!(DecreaseLiquidityEvent {
         position_nft_mint: personal_position.nft_mint,
@@ -422,6 +425,7 @@ pub fn collect_rewards<'b, 'info>(
     token_program_2022: Option<AccountInfo<'info>>,
     personal_position_state: &mut PersonalPositionState,
     need_reward_mint: bool,
+    reward_hook_accounts: &[&[AccountInfo<'info>]],
 ) -> Result<[u64; REWARD_NUM]> {
     let mut reward_amounts: [u64; REWARD_NUM] = [0, 0, 0];
     if !pool_state_loader
@@ -490,7 +494,7 @@ pub fn collect_rewards<'b, 'info>(
                 .load_mut()?
                 .add_reward_claimed(i, transfer_amount)?;
 
-            transfer_from_pool_vault_to_user(
+            transfer_from_pool_vault_to_user_with_hook_accounts(
                 &pool_state_loader,
                 &reward_token_vault.to_account_info(),
                 &recipient_token_account.to_account_info(),
@@ -498,6 +502,7 @@ pub fn collect_rewards<'b, 'info>(
                 &token_program,
                 token_program_2022.clone(),
                 transfer_amount,
+                reward_hook_accounts.get(i).copied().unwrap_or(&[]),
             )?;
         }
         reward_amounts[i] = transfer_amount
