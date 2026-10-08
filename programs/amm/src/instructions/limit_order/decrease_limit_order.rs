@@ -1,5 +1,7 @@
 use crate::states::*;
-use crate::util::{get_transfer_fee, transfer_from_pool_vault_to_user};
+use crate::util::{
+    get_transfer_fee, split_hook_tail, transfer_from_pool_vault_to_user_with_hook_accounts,
+};
 use crate::{error::ErrorCode, Result};
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
@@ -94,6 +96,41 @@ pub fn decrease_limit_order<'info>(
     amount: u64,
     amount_min: u64,
 ) -> Result<()> {
+    decrease_limit_order_inner(ctx, amount, amount_min, 0, 0)
+}
+
+/// Hook-aware `decrease_limit_order`. Remaining accounts: what `decrease_limit_order` takes (the
+/// tick-array bitmap extension, if needed), then the hook slice of the input token's transfer (the
+/// refund of the unfilled amount), then the output token's (the filled part). Each is empty for an
+/// unhooked token.
+pub fn decrease_limit_order_v2<'info>(
+    ctx: Context<'info, DecreaseLimitOrder<'info>>,
+    amount: u64,
+    amount_min: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    decrease_limit_order_inner(
+        ctx,
+        amount,
+        amount_min,
+        input_hook_account_count,
+        output_hook_account_count,
+    )
+}
+
+fn decrease_limit_order_inner<'info>(
+    ctx: Context<'info, DecreaseLimitOrder<'info>>,
+    amount: u64,
+    amount_min: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    let (remaining_accounts, input_hook_accounts, output_hook_accounts) = split_hook_tail(
+        ctx.remaining_accounts,
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
     require!(amount > 0, ErrorCode::ZeroAmountSpecified);
 
     let tick_spacing = ctx.accounts.pool_state.load()?.tick_spacing;
@@ -134,8 +171,8 @@ pub fn decrease_limit_order<'info>(
                 pool_state.is_overflow_default_tickarray_bitmap(vec![tick_array_start_index]);
 
             let tickarray_bitmap_extension = if use_tickarray_bitmap_extension {
-                require!(ctx.remaining_accounts.len() > 0, ErrorCode::AccountLack);
-                Some(&ctx.remaining_accounts[0])
+                require!(remaining_accounts.len() > 0, ErrorCode::AccountLack);
+                Some(&remaining_accounts[0])
             } else {
                 None
             };
@@ -145,7 +182,7 @@ pub fn decrease_limit_order<'info>(
     }
 
     if settled_output_amount > 0 {
-        transfer_from_pool_vault_to_user(
+        transfer_from_pool_vault_to_user_with_hook_accounts(
             &ctx.accounts.pool_state,
             &ctx.accounts.output_vault.to_account_info(),
             &ctx.accounts.output_token_account.to_account_info(),
@@ -153,6 +190,7 @@ pub fn decrease_limit_order<'info>(
             &ctx.accounts.token_program,
             Some(ctx.accounts.token_program_2022.to_account_info()),
             settled_output_amount,
+            output_hook_accounts,
         )?;
     }
 
@@ -167,7 +205,7 @@ pub fn decrease_limit_order<'info>(
             amount_min,
             ErrorCode::PriceSlippageCheck
         );
-        transfer_from_pool_vault_to_user(
+        transfer_from_pool_vault_to_user_with_hook_accounts(
             &ctx.accounts.pool_state,
             &ctx.accounts.input_vault.to_account_info(),
             &ctx.accounts.input_token_account.to_account_info(),
@@ -175,6 +213,7 @@ pub fn decrease_limit_order<'info>(
             &ctx.accounts.token_program,
             Some(ctx.accounts.token_program_2022.to_account_info()),
             real_decrease_amount,
+            input_hook_accounts,
         )?;
     }
 

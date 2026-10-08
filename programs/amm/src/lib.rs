@@ -149,6 +149,29 @@ mod versioned_swap_abi_tests {
             assert_eq!(found_framed, framed_disc, "{framed}");
         }
 
+        // The limit-order instructions: the original and the hook-aware one, pinned.
+        use anchor_lang::Discriminator as _;
+        let limit_orders: [(&[u8], [u8; 8]); 8] = [
+            (crate::instruction::OpenLimitOrder::DISCRIMINATOR, [157, 32, 218, 183, 71, 29, 18, 147]),
+            (crate::instruction::OpenLimitOrderV2::DISCRIMINATOR, [194, 127, 58, 217, 208, 170, 10, 182]),
+            (crate::instruction::IncreaseLimitOrder::DISCRIMINATOR, [177, 144, 89, 236, 250, 186, 125, 99]),
+            (crate::instruction::IncreaseLimitOrderV2::DISCRIMINATOR, [159, 156, 82, 111, 207, 39, 60, 30]),
+            (crate::instruction::DecreaseLimitOrder::DISCRIMINATOR, [117, 157, 60, 103, 66, 49, 163, 0]),
+            (crate::instruction::DecreaseLimitOrderV2::DISCRIMINATOR, [229, 136, 202, 118, 21, 22, 0, 243]),
+            (crate::instruction::SettleLimitOrder::DISCRIMINATOR, [205, 78, 116, 33, 92, 105, 26, 96]),
+            (crate::instruction::SettleLimitOrderV2::DISCRIMINATOR, [233, 76, 73, 254, 1, 240, 206, 252]),
+        ];
+        for (found, pinned) in limit_orders {
+            assert_eq!(found, &pinned[..]);
+        }
+        let settle = crate::instruction::SettleLimitOrderV2 {
+            input_hook_account_count: 0,
+            output_hook_account_count: 4,
+        }
+        .data();
+        assert_eq!(settle.len(), 8 + 4);
+        assert_eq!(&settle[8..], &[0, 0, 4, 0]);
+
         // The counts are the last two arguments: two little-endian u16s at the end of the data.
         let increase = crate::instruction::IncreaseLiquidityV3 {
             liquidity: 1,
@@ -1112,6 +1135,76 @@ pub mod raydium_clmm {
     ///
     pub fn settle_limit_order<'info>(ctx: Context<'info, SettleLimitOrder<'info>>) -> Result<()> {
         instructions::settle_limit_order(ctx)
+    }
+
+    /// Hook-aware `open_limit_order`: the order's input token may have a Transfer Hook. Remaining accounts
+    /// are what `open_limit_order` takes, then the input transfer's hook slice, then the output slice (empty).
+    pub fn open_limit_order_v2<'info>(
+        ctx: Context<'info, OpenLimitOrder<'info>>,
+        nonce_index: u8,
+        zero_for_one: bool,
+        tick_index: i32,
+        amount: u64,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::open_limit_order_v2(
+            ctx,
+            nonce_index,
+            zero_for_one,
+            tick_index,
+            amount,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
+    }
+
+    /// Hook-aware `increase_limit_order` (see `open_limit_order_v2` for the account layout).
+    pub fn increase_limit_order_v2<'info>(
+        ctx: Context<'info, IncreaseLimitOrder<'info>>,
+        amount: u64,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::increase_limit_order_v2(
+            ctx,
+            amount,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
+    }
+
+    /// Hook-aware `decrease_limit_order`: the input token's refund and the output token's settled part each
+    /// run their token's hook. Remaining accounts: what `decrease_limit_order` takes, then the input slice,
+    /// then the output slice.
+    pub fn decrease_limit_order_v2<'info>(
+        ctx: Context<'info, DecreaseLimitOrder<'info>>,
+        amount: u64,
+        amount_min: u64,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::decrease_limit_order_v2(
+            ctx,
+            amount,
+            amount_min,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
+    }
+
+    /// Hook-aware `settle_limit_order`: the output token's transfer runs its hook. Remaining accounts: the
+    /// input slice (empty), then the output slice.
+    pub fn settle_limit_order_v2<'info>(
+        ctx: Context<'info, SettleLimitOrder<'info>>,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::settle_limit_order_v2(
+            ctx,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
     }
 
     /// Close a limit order

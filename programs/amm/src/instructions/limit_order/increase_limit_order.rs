@@ -1,9 +1,11 @@
 use super::{check_limit_order_amount, check_tick_index};
 use crate::states::*;
-use crate::util::{ensure_no_transfer_hook, get_transfer_fee};
+use crate::util::{
+    ensure_no_transfer_hook, get_transfer_fee, split_hook_tail,
+    transfer_from_user_to_pool_vault_with_hook_accounts,
+};
 use crate::{error::ErrorCode, Result};
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 #[derive(Accounts)]
@@ -71,6 +73,41 @@ pub fn increase_limit_order<'info>(
     amount: u64,
 ) -> Result<()> {
     ensure_no_transfer_hook(&ctx.accounts.input_vault_mint.to_account_info())?;
+    increase_limit_order_inner(ctx, amount, 0, 0)
+}
+
+/// Hook-aware `increase_limit_order`. Remaining accounts: what `increase_limit_order` takes (the
+/// tick-array bitmap extension, if needed), then the input transfer's hook slice, then the output slice
+/// (which must be empty).
+pub fn increase_limit_order_v2<'info>(
+    ctx: Context<'info, IncreaseLimitOrder<'info>>,
+    amount: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    increase_limit_order_inner(
+        ctx,
+        amount,
+        input_hook_account_count,
+        output_hook_account_count,
+    )
+}
+
+fn increase_limit_order_inner<'info>(
+    ctx: Context<'info, IncreaseLimitOrder<'info>>,
+    amount: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    require!(
+        output_hook_account_count == 0,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let (remaining_accounts, input_hook_accounts, _) = split_hook_tail(
+        ctx.remaining_accounts,
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
     require!(amount > 0, ErrorCode::ZeroAmountSpecified);
     let (tick_spacing, tick_current) = {
         let pool_state = ctx.accounts.pool_state.load()?;
@@ -129,8 +166,8 @@ pub fn increase_limit_order<'info>(
                 pool_state.is_overflow_default_tickarray_bitmap(vec![tick_array_start_index]);
 
             let tickarray_bitmap_extension = if use_tickarray_bitmap_extension {
-                require!(ctx.remaining_accounts.len() > 0, ErrorCode::AccountLack);
-                Some(&ctx.remaining_accounts[0])
+                require!(remaining_accounts.len() > 0, ErrorCode::AccountLack);
+                Some(&remaining_accounts[0])
             } else {
                 None
             };
@@ -139,18 +176,15 @@ pub fn increase_limit_order<'info>(
         }
     }
 
-    token_2022::transfer_checked(
-        CpiContext::new(
-            ctx.accounts.input_token_program.key(),
-            token_2022::TransferChecked {
-                from: ctx.accounts.input_token_account.to_account_info(),
-                to: ctx.accounts.input_vault.to_account_info(),
-                authority: ctx.accounts.owner.to_account_info(),
-                mint: ctx.accounts.input_vault_mint.to_account_info(),
-            },
-        ),
+    transfer_from_user_to_pool_vault_with_hook_accounts(
+        &ctx.accounts.owner,
+        &ctx.accounts.input_token_account.to_account_info(),
+        &ctx.accounts.input_vault.to_account_info(),
+        Some(ctx.accounts.input_vault_mint.clone()),
+        &ctx.accounts.input_token_program.to_account_info(),
+        Some(ctx.accounts.input_token_program.to_account_info()),
         amount,
-        ctx.accounts.input_vault_mint.decimals,
+        input_hook_accounts,
     )?;
 
     Ok(())

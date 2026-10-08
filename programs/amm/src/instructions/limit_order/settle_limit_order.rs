@@ -1,4 +1,6 @@
+use crate::error::ErrorCode;
 use crate::states::*;
+use crate::util::{split_hook_tail, transfer_from_pool_vault_to_user_with_hook_accounts};
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
@@ -54,8 +56,39 @@ pub struct SettleLimitOrder<'info> {
     pub output_token_program: Interface<'info, TokenInterface>,
 }
 
-pub fn settle_limit_order(ctx: Context<SettleLimitOrder>) -> Result<()> {
+pub fn settle_limit_order<'info>(ctx: Context<'info, SettleLimitOrder<'info>>) -> Result<()> {
     crate::util::ensure_no_transfer_hook(&ctx.accounts.output_vault_mint.to_account_info())?;
+    settle_limit_order_inner(ctx, 0, 0)
+}
+
+/// Hook-aware `settle_limit_order`. Only the output token is transferred, so the remaining accounts are
+/// the input slice (which must be empty), then the output transfer's hook slice.
+pub fn settle_limit_order_v2<'info>(
+    ctx: Context<'info, SettleLimitOrder<'info>>,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    settle_limit_order_inner(ctx, input_hook_account_count, output_hook_account_count)
+}
+
+fn settle_limit_order_inner<'info>(
+    ctx: Context<'info, SettleLimitOrder<'info>>,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    require!(
+        input_hook_account_count == 0,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let (remaining_accounts, _, output_hook_accounts) = split_hook_tail(
+        ctx.remaining_accounts,
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
+    require!(
+        remaining_accounts.is_empty(),
+        ErrorCode::InvalidHookAccountFraming
+    );
     let tick_spacing = ctx.accounts.pool_state.load()?.tick_spacing;
 
     let tick_index = ctx.accounts.limit_order.tick_index;
@@ -76,6 +109,18 @@ pub fn settle_limit_order(ctx: Context<SettleLimitOrder>) -> Result<()> {
         filled_amount: ctx.accounts.limit_order.filled_amount,
         settled_amount_out: amount_out,
     });
+    if amount_out > 0 || !output_hook_accounts.is_empty() {
+        return transfer_from_pool_vault_to_user_with_hook_accounts(
+            &ctx.accounts.pool_state,
+            &ctx.accounts.output_vault.to_account_info(),
+            &ctx.accounts.output_token_account.to_account_info(),
+            Some(ctx.accounts.output_vault_mint.clone()),
+            &ctx.accounts.output_token_program.to_account_info(),
+            Some(ctx.accounts.output_token_program.to_account_info()),
+            amount_out,
+            output_hook_accounts,
+        );
+    }
     // For monitoring purposes, perform the transfer even if amount_out is 0
     token_2022::transfer_checked(
         CpiContext::new_with_signer(
